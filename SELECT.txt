@@ -1,0 +1,88 @@
+-- 1. Проверка на наличие товаров, если они в размере 0, то им присваивается значение к заказу
+UPDATE Order_Items
+SET Product_Quantity = 1 -- Присваиваем значение 1 или любое другое, которое вы хотите
+WHERE Product_Quantity = 0;
+
+-- 2. Создание списка всех материалов, которые необходимы к заказу
+SELECT 
+    oi.Order_ID,
+    m.Material_Name,
+    oi.Product_Quantity,
+    oi.Size
+FROM 
+    Order_Items oi
+JOIN 
+    Materials m ON oi.Material_ID = m.Material_ID
+WHERE 
+    oi.Product_Quantity > 0;
+
+-- 3. Формирование отчётов по всем текущим и завершённым заказам
+SELECT 
+    o.Order_ID,
+    o.Customer_ID,
+    o.Order_Date,
+    o.Delivery_Deadline,
+    o.Delivery_Method,
+    o.Delivery_Address,
+    CASE 
+        WHEN o.Delivery_Deadline >= CURRENT_DATE THEN 'Текущий'
+        ELSE 'Завершённый'
+    END AS Order_Status
+FROM 
+    Orders o;
+
+-- 4. Отчёты о движении материалов на складе
+SELECT 
+    m.Material_ID,
+    m.Material_Name,
+    m.Material_Condition,
+    SUM(CASE WHEN oi.Product_Quantity > 0 THEN oi.Product_Quantity ELSE 0 END) AS Total_Used,
+    SUM(CASE WHEN oi.Product_Quantity = 0 THEN 1 ELSE 0 END) AS Total_Ordered
+FROM 
+    Materials m
+LEFT JOIN 
+    Order_Items oi ON m.Material_ID = oi.Material_ID
+GROUP BY 
+    m.Material_ID, m.Material_Name, m.Material_Condition;
+
+-- 5. Формирование списка изделий для швейного цеха, которые необходимо произвести с учетом даты завершения заказа
+SELECT 
+    oi.Product_ID,
+    p.Product_Name,
+    oi.Product_Quantity,
+    o.Delivery_Deadline
+FROM 
+    Order_Items oi
+JOIN 
+    Products p ON oi.Product_ID = p.Product_ID
+JOIN 
+    Orders o ON oi.Order_ID = o.Order_ID
+WHERE 
+    o.Delivery_Deadline >= CURRENT_DATE;
+
+-- 6. Выгрузка данных о выполнении заказов для анализа эффективности
+SELECT 
+    o.Order_ID,
+    o.Customer_ID,
+    o.Order_Date,
+    o.Delivery_Deadline,
+    SUM(oi.Product_Quantity) AS Total_Products,
+    SUM(oi.Product_Quantity * p.Material_Consumption) AS Total_Cost
+FROM 
+    Orders o
+JOIN 
+    Order_Items oi ON o.Order_ID = oi.Order_ID
+JOIN 
+    Products p ON oi.Product_ID = p.Product_ID
+GROUP BY 
+    o.Order_ID, o.Customer_ID, o.Order_Date, o.Delivery_Deadline;
+
+-- 7. Формирование отчетности о финансах компании. Прибыль и затраты.
+SELECT 
+    SUM(oi.Product_Quantity * p.Material_Consumption) AS Total_Cost,
+    SUM(oi.Product_Quantity * p.Material_Consumption * 1.5) AS Total_Revenue, -- Предположим, что цена продажи в 1.5 раза выше себестоимости
+    (SUM(oi.Product_Quantity * p.Material_Consumption * 1.5) - SUM(oi.Product_Quantity * p.Material_Consumption)) AS Profit
+FROM 
+    Order_Items oi
+JOIN 
+    Products p ON oi.Product_ID = p.Product_ID;
