@@ -1,0 +1,176 @@
+-- Удаление базы данных, если она существует
+DROP DATABASE IF EXISTS my_database;
+
+-- Создание новой базы данных
+CREATE DATABASE my_database;
+
+USE my_database;
+
+-- Создание таблицы "Customers"
+CREATE TABLE Customers (
+    Customer_ID VARCHAR(10) PRIMARY KEY, -- Код клиента
+    Customer_Name VARCHAR(255) NOT NULL, -- Наименование клиента
+    Phone VARCHAR(20) NOT NULL, -- Телефон
+    Email VARCHAR(255) NOT NULL -- Адрес электронной почты
+);
+
+-- Создание таблицы "Suppliers"
+CREATE TABLE Suppliers (
+    Supplier_ID VARCHAR(10) PRIMARY KEY, -- Код поставщика
+    Supplier_Name VARCHAR(255) NOT NULL -- Наименование поставщика
+);
+
+-- Создание таблицы "Orders"
+CREATE TABLE Orders (
+    Order_ID VARCHAR(10) PRIMARY KEY, -- Код заказа
+    Customer_ID VARCHAR(10), -- Код клиента
+    Order_Date DATE NOT NULL DEFAULT CURRENT_DATE, -- Дата заказа
+    Delivery_Deadline DATE NOT NULL, -- Срок выполнения заказа
+    Delivery_Method VARCHAR(50) NOT NULL, -- Способ доставки
+    Delivery_Address VARCHAR(255) NOT NULL, -- Адрес доставки
+    FOREIGN KEY (Customer_ID) REFERENCES Customers(Customer_ID)
+);
+
+-- Создание таблицы "Materials"
+CREATE TABLE Materials (
+    Material_ID VARCHAR(10) PRIMARY KEY, -- Код материала
+    Material_Name VARCHAR(255) NOT NULL, -- Наименование материала
+    Supplier_ID VARCHAR(10), -- Код поставщика
+    Material_Condition VARCHAR(50) NOT NULL DEFAULT 'На складе', -- Состояние материала
+    Color VARCHAR(50) NOT NULL, -- Цвет материала
+    Pattern VARCHAR(255) NOT NULL DEFAULT 'Нет рисунка', -- Рисунок
+    Additional_Info VARCHAR(255) NOT NULL, -- Дополнительные особенности материала
+    Arrival_Date DATE NOT NULL DEFAULT CURRENT_DATE, -- Дата поступления материала
+    FOREIGN KEY (Supplier_ID) REFERENCES Suppliers(Supplier_ID)
+);
+
+-- Создание таблицы "Products"
+CREATE TABLE Products (
+    Product_ID VARCHAR(10) PRIMARY KEY, -- Код изделия
+    Product_Name VARCHAR(255) NOT NULL, -- Наименование изделия
+    Material_Consumption DECIMAL(10,2) NOT NULL -- Количество потраченного материала
+);
+
+-- Создание таблицы "Services"
+CREATE TABLE Services (
+    Service_ID VARCHAR(10) PRIMARY KEY, -- Код дополнительной услуги
+    Service_Name VARCHAR(255) NOT NULL, -- Наименование дополнительной услуги
+    Material_Consumption DECIMAL(10,2) NOT NULL, -- Количество потраченного материала
+    Material_ID VARCHAR(10), -- Код материала
+    FOREIGN KEY (Material_ID) REFERENCES Materials(Material_ID)
+);
+
+-- Создание таблицы "Order_Items" (Состав заказа)
+CREATE TABLE Order_Items (
+    Ordered_Product_ID VARCHAR(10) NOT NULL UNIQUE, -- Код заказанного изделия
+    Order_ID VARCHAR(10), -- Код заказа
+    Product_ID VARCHAR(10), -- Код изделия 
+    Size VARCHAR(10) NOT NULL, -- Размер изделия (Российская размерная сетка)
+    Material_ID VARCHAR(10), -- Код материала
+    Service_ID VARCHAR(10), -- Код дополнительной услуги
+    PRIMARY KEY (Ordered_Product_ID, Order_ID, Product_ID),
+    FOREIGN KEY (Order_ID) REFERENCES Orders(Order_ID),
+    FOREIGN KEY (Product_ID) REFERENCES Products(Product_ID),
+    FOREIGN KEY (Material_ID) REFERENCES Materials(Material_ID),
+    FOREIGN KEY (Service_ID) REFERENCES Services(Service_ID)
+);
+
+ALTER TABLE Order_Items ADD COLUMN Product_Quantity INT NOT NULL; -- Количество изделия
+ALTER TABLE Order_Items ADD COLUMN Status VARCHAR(50) DEFAULT 'В ожидании'; -- Статус заказанного изделия
+
+-- Триггер для автоматического заполнения кода клиента
+DELIMITER //
+CREATE TRIGGER before_insert_customers
+BEFORE INSERT ON Customers
+FOR EACH ROW
+BEGIN
+    SET NEW.Customer_ID = CONCAT('666', LPAD((SELECT COALESCE(MAX(CAST(SUBSTRING(Customer_ID, 4) AS UNSIGNED)), 0) + 1 FROM Customers), 6, '0'));
+END; //
+DELIMITER ;
+
+-- Триггер для автоматического заполнения кода поставщика
+DELIMITER //
+CREATE TRIGGER before_insert_suppliers
+BEFORE INSERT ON Suppliers
+FOR EACH ROW
+BEGIN
+    SET NEW.Supplier_ID = CONCAT('222', LPAD((SELECT COALESCE(MAX(CAST(SUBSTRING(Supplier_ID, 4) AS UNSIGNED)), 0) + 1 FROM Suppliers), 6, '0'));
+END; //
+DELIMITER ;
+
+-- Триггер для автоматического заполнения кода заказа
+DELIMITER //
+CREATE TRIGGER before_insert_orders
+BEFORE INSERT ON Orders
+FOR EACH ROW
+BEGIN
+    SET NEW.Order_ID = CONCAT('1000', LPAD((SELECT COALESCE(MAX(CAST(SUBSTRING(Order_ID, 4) AS UNSIGNED)), 0) + 1 FROM Orders), 6, '0'));
+END; //
+DELIMITER ;
+
+-- Триггер для автоматического заполнения кода материала
+DELIMITER //
+CREATE TRIGGER before_insert_materials
+BEFORE INSERT ON Materials
+FOR EACH ROW
+BEGIN
+    SET NEW.Material_ID = CONCAT('555', LPAD((SELECT COALESCE(MAX(CAST(SUBSTRING(Material_ID, 4) AS UNSIGNED)), 0) + 1 FROM Materials), 6, '0'));
+END; //
+DELIMITER ;
+
+-- Триггер для автоматического заполнения кода изделия
+DELIMITER //
+CREATE TRIGGER before_insert_products
+BEFORE INSERT ON Products
+FOR EACH ROW
+BEGIN
+    SET NEW.Product_ID = CONCAT('444', LPAD((SELECT COALESCE(MAX(CAST(SUBSTRING(Product_ID, 4) AS UNSIGNED)), 0) + 1 FROM Products), 6, '0'));
+END; //
+DELIMITER ;
+
+-- Триггер для автоматического заполнения кода услуги
+DELIMITER //
+CREATE TRIGGER before_insert_services
+BEFORE INSERT ON Services
+FOR EACH ROW
+BEGIN
+    SET NEW.Service_ID = CONCAT('333', LPAD((SELECT COALESCE(MAX(CAST(SUBSTRING(Service_ID, 4) AS UNSIGNED)), 0) + 1 FROM Services), 6, '0'));
+END; //
+DELIMITER ;
+
+-- Триггер для автоматического заполнения кода заказанного изделия
+DELIMITER //
+CREATE TRIGGER before_insert_order_items
+BEFORE INSERT ON Order_Items
+FOR EACH ROW
+BEGIN
+    SET NEW.Ordered_Product_ID = CONCAT('111', LPAD((SELECT COALESCE(MAX(CAST(SUBSTRING(Ordered_Product_ID, 4) AS UNSIGNED)), 0) + 1 FROM Order_Items), 6, '0'));
+END; //
+DELIMITER ;
+
+
+-- создание пользователей
+-- Клиент
+CREATE USER 'customer'@'localhost' IDENTIFIED BY 'password';
+GRANT SELECT ON my_database.Orders TO 'customer'@'localhost';
+GRANT SELECT ON my_database.Order_Items TO 'customer'@'localhost';
+GRANT UPDATE (Phone, Email) ON my_database.Customers TO 'customer'@'localhost';
+GRANT INSERT ON my_database.Orders TO 'customer'@'localhost';
+
+-- Менеджер по заказам
+CREATE USER 'order_manager'@'localhost' IDENTIFIED BY 'password';
+GRANT SELECT ON my_database.Orders TO 'order_manager'@'localhost';
+GRANT SELECT ON my_database.Customers TO 'order_manager'@'localhost';
+GRANT SELECT ON my_database.Materials TO 'order_manager'@'localhost';
+GRANT UPDATE (Delivery_Method, Delivery_Address) ON my_database.Orders TO 'order_manager'@'localhost';
+GRANT INSERT, UPDATE ON my_database.Order_Items TO 'order_manager'@'localhost';
+GRANT INSERT, UPDATE ON my_database.Services TO 'order_manager'@'localhost';
+
+-- Кладовщик
+CREATE USER 'storekeeper'@'localhost' IDENTIFIED BY 'password';
+GRANT SELECT, UPDATE ON my_database.Materials TO 'storekeeper'@'localhost';
+GRANT INSERT ON my_database.Materials TO 'storekeeper'@'localhost'; -- Для корректировки остатков
+
+-- Мастер
+CREATE USER IF NOT EXISTS 'worker'@'localhost' IDENTIFIED BY 'password';
+GRANT UPDATE (Status) ON my_database.Order_Items TO 'worker'@'localhost';

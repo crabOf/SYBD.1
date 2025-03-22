@@ -1,0 +1,321 @@
+-- BR - 2 Заказ должен содержать минимум один материал или услугу.
+DELIMITER //
+
+CREATE TRIGGER check_material_availability_before_insert
+BEFORE INSERT ON Order_Items
+FOR EACH ROW
+BEGIN
+    DECLARE material_count INT;
+
+    -- Проверяем, есть ли материалы в заказе с состоянием 'На складе' или 'Ожидается'
+    SELECT COUNT(*)
+    INTO material_count
+    FROM Materials m
+    WHERE m.Material_ID = NEW.Material_ID
+      AND m.Material_Condition IN ('На складе', 'Ожидается');
+
+    -- Если материалов нет, генерируем ошибку
+    IF material_count = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Ошибка: Заказ должен содержать минимум один доступный материал.';
+    END IF;
+END; //
+
+DELIMITER ;
+
+
+-- Проверка статуса материала и его динамическое изменение
+DELIMITER //
+
+CREATE PROCEDURE CheckMaterialStatusAndProcessOrders()
+BEGIN
+    DECLARE done INT DEFAULT 0;
+    DECLARE material_id VARCHAR(10);
+    DECLARE order_id VARCHAR(10);
+
+    -- Курсор для выбора материалов со статусом "на складе"
+    DECLARE material_cursor CURSOR FOR
+    SELECT Material_ID
+    FROM Materials
+    WHERE Material_Condition = 'На складе';
+
+    -- Обработка завершения курсора
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+    OPEN material_cursor;
+
+    read_loop: LOOP
+        FETCH material_cursor INTO material_id;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+
+        -- Проверяем незавершенные заказы с этим материалом
+        UPDATE Orders o
+        JOIN Order_Items oi ON o.Order_ID = oi.Order_ID
+        SET o.Delivery_Method = 'в обработке'
+        WHERE oi.Material_ID = material_id
+          AND o.Delivery_Method = 'предзаказ';
+    END LOOP;
+
+    CLOSE material_cursor;
+END; //
+
+DELIMITER ;
+
+-- BR - 4 Если материал для изготовления товара отсутствует, клиент может сделать предзаказ с указанием ожидаемой даты поступления материала.
+
+DELIMITER //
+
+CREATE PROCEDURE UpdateMaterialStatus(
+    IN material_id VARCHAR(10),
+    IN new_status VARCHAR(50)
+)
+BEGIN
+    DECLARE material_exists INT;
+    DECLARE current_status VARCHAR(50);
+
+    -- Проверяем, существует ли материал
+    SELECT COUNT(*)
+    INTO material_exists
+    FROM Materials
+    WHERE Material_ID = material_id;
+
+    IF material_exists = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Ошибка: Материал с указанным ID не существует.';
+    END IF;
+
+    -- Получаем текущий статус материала
+    SELECT Material_Condition
+    INTO current_status
+    FROM Materials
+    WHERE Material_ID = material_id;
+
+    -- Проверяем допустимость нового статуса
+    IF new_status NOT IN ('На складе', 'К заказу') THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Ошибка: Недопустимый статус материала.';
+    END IF;
+
+    -- Изменяем статус материала
+    IF current_status != new_status THEN
+        UPDATE Materials
+        SET Material_Condition = new_status
+        WHERE Material_ID = material_id;
+
+        -- Если статус изменился на "На складе", проверяем связанные заказы
+        IF new_status = 'На складе' THEN
+            CALL CheckMaterialStatusAndProcessOrders();
+        END IF;
+    ELSE
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Ошибка: Статус материала уже установлен.';
+    END IF;
+END; //
+
+DELIMITER ;
+
+
+
+
+
+
+-- 1. Проверка на наличие товаров, если они в размере 0, то им присваивается значение к заказу
+UPDATE Order_Items
+SET Product_Quantity = 1 -- Присваиваем значение 1 или любое другое, которое вы хотите
+WHERE Product_Quantity = 0;
+
+-- 2. Создание списка всех материалов, которые необходимы к заказу
+SELECT 
+    oi.Order_ID,
+    m.Material_Name,
+    oi.Product_Quantity,
+    oi.Size
+FROM 
+    Order_Items oi
+JOIN 
+    Materials m ON oi.Material_ID = m.Material_ID
+WHERE 
+    oi.Product_Quantity > 0;
+
+-- 3. Формирование отчётов по всем текущим и завершённым заказам
+SELECT 
+    o.Order_ID,
+    o.Customer_ID,
+    o.Order_Date,
+    o.Delivery_Deadline,
+    o.Delivery_Method,
+    o.Delivery_Address,
+    CASE 
+        WHEN o.Delivery_Deadline >= CURRENT_DATE THEN 'Текущий'
+        ELSE 'Завершённый'
+    END AS Order_Status
+FROM 
+    Orders o;
+
+-- 4. Отчёты о движении материалов на складе
+SELECT 
+    m.Material_ID,
+    m.Material_Name,
+    m.Material_Condition,
+    SUM(CASE WHEN oi.Product_Quantity > 0 THEN oi.Product_Quantity ELSE 0 END) AS Total_Used,
+    SUM(CASE WHEN oi.Product_Quantity = 0 THEN 1 ELSE 0 END) AS Total_Ordered
+FROM 
+    Materials m
+LEFT JOIN 
+    Order_Items oi ON m.Material_ID = oi.Material_ID
+GROUP BY 
+    m.Material_ID, m.Material_Name, m.Material_Condition;
+
+-- 5. Формирование списка изделий для швейного цеха, которые необходимо произвести с учетом даты завершения заказа
+SELECT 
+    oi.Product_ID,
+    p.Product_Name,
+    oi.Product_Quantity,
+    o.Delivery_Deadline
+FROM 
+    Order_Items oi
+JOIN 
+    Products p ON oi.Product_ID = p.Product_ID
+JOIN 
+    Orders o ON oi.Order_ID = o.Order_ID
+WHERE 
+    o.Delivery_Deadline >= CURRENT_DATE;
+
+-- 6. Выгрузка данных о выполнении заказов для анализа эффективности
+SELECT 
+    o.Order_ID,
+    o.Customer_ID,
+    o.Order_Date,
+    o.Delivery_Deadline,
+    SUM(oi.Product_Quantity) AS Total_Products,
+    SUM(oi.Product_Quantity * p.Material_Consumption) AS Total_Cost
+FROM 
+    Orders o
+JOIN 
+    Order_Items oi ON o.Order_ID = oi.Order_ID
+JOIN 
+    Products p ON oi.Product_ID = p.Product_ID
+GROUP BY 
+    o.Order_ID, o.Customer_ID, o.Order_Date, o.Delivery_Deadline;
+
+-- 7. Формирование отчетности о финансах компании. Прибыль и затраты.
+SELECT 
+    SUM(oi.Product_Quantity * p.Material_Consumption) AS Total_Cost,
+    SUM(oi.Product_Quantity * p.Material_Consumption * 1.5) AS Total_Revenue, -- Предположим, что цена продажи в 1.5 раза выше себестоимости
+    (SUM(oi.Product_Quantity * p.Material_Consumption * 1.5) - SUM(oi.Product_Quantity * p.Material_Consumption)) AS Profit
+FROM 
+    Order_Items oi
+JOIN 
+    Products p ON oi.Product_ID = p.Product_ID;
+
+-- 8.Запрос для списка просроченных заказов
+SELECT 
+    Order_ID,
+    Customer_ID,
+    Order_Date,
+    Delivery_Deadline,
+    Delivery_Method AS Status
+FROM Orders
+WHERE Delivery_Method NOT IN ('готов к выдаче', 'завершено')
+  AND Delivery_Deadline < CURRENT_DATE
+ORDER BY Delivery_Deadline ASC;
+
+-- 9. Создание графика заказов с учетом приоритетов производства
+SELECT 
+    Order_ID,
+    Customer_ID,
+    Order_Date,
+    Delivery_Deadline,
+    Delivery_Method AS Status,
+    CASE 
+        WHEN Delivery_Method = 'брак' THEN 1
+        WHEN Delivery_Method = 'шьется' THEN 2
+        WHEN Delivery_Method = 'упаковывается' THEN 3
+        ELSE 4
+    END AS Priority
+FROM Orders
+WHERE Delivery_Method NOT IN ('готов к выдаче', 'завершено')
+ORDER BY 
+    Delivery_Deadline ASC, -- Сначала по крайнему сроку
+    CASE 
+        WHEN Delivery_Method = 'брак' THEN 1
+        WHEN Delivery_Method = 'шьется' THEN 2
+        WHEN Delivery_Method = 'упаковывается' THEN 3
+        ELSE 4
+    END ASC, -- Затем по приоритету статуса
+    Order_Date ASC; -- Для заказов с одинаковыми сроками и статусами: сначала старые
+
+-- 10. Представление для списка материалов, необходимых к заказу
+CREATE VIEW Materials_To_Order AS
+SELECT 
+    oi.Order_ID,
+    m.Material_Name,
+    p.Material_Consumption,
+    oi.Product_Quantity,
+    (oi.Product_Quantity * p.Material_Consumption) AS Total_Material_Needed,
+    oi.Size
+FROM 
+    Order_Items oi
+JOIN 
+    Materials m ON oi.Material_ID = m.Material_ID
+JOIN 
+    Products p ON oi.Product_ID = p.Product_ID
+WHERE 
+    m.Material_Condition = 'К заказу';
+
+-- 11. Подсчет элементов определенного размера
+DELIMITER //
+
+DELIMITER //
+
+CREATE FUNCTION CountItemsByMaterial(material_id VARCHAR(10))
+RETURNS INT
+DETERMINISTIC
+BEGIN
+    DECLARE item_count INT;
+
+    -- Подсчитываем количество позиций в заказах, использующих указанный материал
+    SELECT COUNT(*)
+    INTO item_count
+    FROM Order_Items
+    WHERE Product_Quantity > 0 AND Material_ID = material_id;
+
+    RETURN item_count;
+END //
+
+DELIMITER ;
+
+-- 12. Формирование списка изделий для швейного цеха с учетом минимальных затрат на материалы
+SELECT 
+    p.Product_ID,
+    p.Product_Name,
+    p.Material_Consumption,
+    (
+        SELECT SUM(m.Arrival_Date < CURRENT_DATE)
+        FROM Materials m
+        WHERE m.Material_ID IN (
+            SELECT Material_ID FROM Order_Items WHERE Product_ID = p.Product_ID
+        )
+    ) AS Available_Materials
+FROM 
+    Products p
+WHERE 
+    p.Material_Consumption > 2
+ORDER BY 
+    p.Material_Consumption DESC;
+
+
+-- Применение
+CALL CheckMaterialStatusAndProcessOrders();
+
+CALL UpdateMaterialStatus('555000001', 'На складе');
+
+UPDATE Order_Items
+SET Product_Quantity = 1
+WHERE Product_Quantity = 0;
+
+SELECT * FROM Materials_To_Order;
+
+SELECT CountItemsByMaterial('555000001') AS Total_Items_For_Material;
